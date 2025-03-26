@@ -70,7 +70,7 @@
 设定好`save_dir`和代理后，即可开始下载
 
 ```
-pip install -r requirement.txt
+pip install -r requirements.txt
 ```
 
 ```
