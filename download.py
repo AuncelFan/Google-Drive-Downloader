@@ -22,37 +22,49 @@ def run(file_id: str, save_dir: str, credentials_path: str):
     :param file_id: Google Drive 文件 ID
     :param save_dir: 下载目录
     :param credentials_path: 认证凭据文件路径
+    :return: 下载是否成功
     """
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+    try:
+        creds = None
+        if os.path.exists("token.json"):
+            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                creds = flow.run_local_server(port=PORT)
+            with open("token.json", "w") as token:
+                token.write(creds.to_json())
+
+        service = build("drive", "v3", credentials=creds)
+
+        os.makedirs(save_dir, exist_ok=True)
+
+        file_name = get_file_name(service, file_id)
+        final_path = os.path.join(save_dir, file_name)
+
+        if os.path.exists(final_path):
+            print(f"\n🆗 文件已存在: {final_path}")
+            return True
+
+        temp_path = os.path.join(save_dir, f"{file_id}.part")
+
+        success = resume_download(service, file_id, temp_path, max_retries=3)
+
+        if success:
+            os.rename(temp_path, final_path)
+            print(f"\n✅ 文件下载完成: {final_path}")
+            return True
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=PORT)
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
-    service = build("drive", "v3", credentials=creds)
-
-    os.makedirs(save_dir, exist_ok=True)
-
-    file_name = get_file_name(service, file_id)
-    final_path = os.path.join(save_dir, file_name)
-    temp_path = os.path.join(save_dir, f"{file_id}.part")
-
-    success = resume_download(service, file_id, temp_path)
-
-    if success:
-        os.rename(temp_path, final_path)
-        print(f"\n✅ 文件下载完成: {final_path}")
-    else:
-        print(f"\n❌ 下载失败，临时文件已保存: {temp_path}")
+            print(f"\n❌ 下载失败，临时文件已保存: {temp_path}")
+            return False
+    except Exception as e:
+        print(f"\n❌ 任务异常: {e}")
+        return False
 
 
-def resume_download(service, file_id, temp_path, max_retries=5):
+def resume_download(service, file_id, temp_path, max_retries=3):
     """
     断点续传 Google Drive 文件（带异常处理 & 进度条）
     :param service: 已授权的 Google Drive API 客户端
@@ -127,7 +139,7 @@ def get_file_name(service, file_id):
 
 if __name__ == "__main__":
     file_id = ""
-    save_dir = ""
+    save_dir = "/opt/download"
     credentials_path = "credential.json"
 
     run(file_id, save_dir, credentials_path)

@@ -1,2 +1,6 @@
-credential.json
-token.json
+*
+!LICESNSE
+!README.md
+!assets/
+!download.py
+!requirements.txt
