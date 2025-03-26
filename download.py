@@ -32,7 +32,9 @@ def run(file_id: str, save_dir: str, credentials_path: str):
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    credentials_path, SCOPES
+                )
                 creds = flow.run_local_server(port=PORT)
             with open("token.json", "w") as token:
                 token.write(creds.to_json())
@@ -41,7 +43,8 @@ def run(file_id: str, save_dir: str, credentials_path: str):
 
         os.makedirs(save_dir, exist_ok=True)
 
-        file_name = get_file_name(service, file_id)
+        file_info = get_file_info(service, file_id)
+        file_name = file_info.get("name", "unknown")
         final_path = os.path.join(save_dir, file_name)
 
         if os.path.exists(final_path):
@@ -50,7 +53,7 @@ def run(file_id: str, save_dir: str, credentials_path: str):
 
         temp_path = os.path.join(save_dir, f"{file_id}.part")
 
-        success = resume_download(service, file_id, temp_path, max_retries=3)
+        success = resume_download(service, file_id, temp_path, file_info, max_retries=3)
 
         if success:
             os.rename(temp_path, final_path)
@@ -64,22 +67,19 @@ def run(file_id: str, save_dir: str, credentials_path: str):
         return False
 
 
-def resume_download(service, file_id, temp_path, max_retries=3):
+def resume_download(service, file_id, temp_path, file_info, max_retries=3):
     """
     断点续传 Google Drive 文件（带异常处理 & 进度条）
     :param service: 已授权的 Google Drive API 客户端
     :param file_id: 需要下载的文件 ID
     :param temp_path: 临时保存路径
+    :param file_info: 文件信息
     :param max_retries: 允许的最大重试次数
     :return: 下载是否成功
     """
     offset = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
 
-    file_info = (
-        service.files()
-        .get(fileId=file_id, fields="size", supportsAllDrives=True)
-        .execute()
-    )
+    file_name = file_info.get("name", "unknown")
     total_size = int(file_info.get("size", 0))
 
     request = service.files().get_media(fileId=file_id)
@@ -93,6 +93,8 @@ def resume_download(service, file_id, temp_path, max_retries=3):
 
     done = False
     retries = 0
+
+    print(f"\n📥 开始下载: {file_name}, ID: {file_id}, Size: {total_size}B")
 
     with tqdm(
         total=total_size, unit="B", unit_scale=True, unit_divisor=1024, initial=offset
@@ -118,23 +120,17 @@ def resume_download(service, file_id, temp_path, max_retries=3):
                     f"\n[WARN] 发生错误: {e}, {retry_wait} 秒后重试 ({retries}/{max_retries})..."
                 )
                 time.sleep(retry_wait)
-
     return done
 
 
-def get_file_name(service, file_id):
+def get_file_info(service, file_id):
     """
-    通过 file_id 获取 Google Drive 文件的名称
+    获取 Google Drive 文件信息
     :param service: 已授权的 Google Drive API 客户端
-    :param file_id: 目标文件的 ID
-    :return: 文件名称
+    :param file_id: 文件 ID
+    :return: 文件信息
     """
-    file = (
-        service.files()
-        .get(fileId=file_id, fields="name", supportsAllDrives=True)
-        .execute()
-    )
-    return file.get("name", "unknown_file")
+    return service.files().get(fileId=file_id, fields="name,size").execute()
 
 
 if __name__ == "__main__":
