@@ -69,47 +69,46 @@ def run(file_id: str, save_dir: str, credentials_path: str):
 
 def resume_download(service, file_id, temp_path, file_info, max_retries=3):
     """
-    断点续传 Google Drive 文件（带异常处理 & 进度条）
+    断点续传 Google Drive 文件
     :param service: 已授权的 Google Drive API 客户端
-    :param file_id: 需要下载的文件 ID
-    :param temp_path: 临时保存路径
+    :param file_id: 文件 ID
+    :param temp_path: 临时文件路径
     :param file_info: 文件信息
-    :param max_retries: 允许的最大重试次数
-    :return: 下载是否成功
+    :param max_retries: 最大重试次数
+    :return: 是否下载成功
     """
-    offset = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
 
     file_name = file_info.get("name", "unknown")
     total_size = int(file_info.get("size", 0))
+    offset = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
 
     request = service.files().get_media(fileId=file_id)
 
-    # 断点续传头部
-    if offset > 0:
-        request.headers["Range"] = f"bytes={offset}-"
-
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request, chunksize=1024 * 1024)
-
-    done = False
-    retries = 0
-
     print(f"\n📥 开始下载: {file_name}, ID: {file_id}, Size: {total_size}B")
 
+    # 创建进度条和文件对象
     with tqdm(
-        total=total_size, unit="B", unit_scale=True, unit_divisor=1024, initial=offset
-    ) as progress_bar:
+        total=total_size,
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+        initial=offset,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+    ) as progress_bar, io.FileIO(temp_path, mode="ab") as f:
+
+        downloader = MediaIoBaseDownload(f, request, chunksize=1024 * 1024)
+        downloader._progress = offset
+        done = False
+        retries = 0
+
         while not done and retries < max_retries:
             try:
                 status, done = downloader.next_chunk()
 
-                downloaded = fh.tell()
+                downloaded = status.resumable_progress
+                progress_bar.update(downloaded - offset)
 
-                with open(temp_path, "ab") as f:
-                    fh.seek(0)
-                    f.write(fh.read())
-
-                progress_bar.update(downloaded)
+                offset = downloaded
 
                 retries = 0  # 成功下载一部分，重置重试计数
 
@@ -120,6 +119,7 @@ def resume_download(service, file_id, temp_path, file_info, max_retries=3):
                     f"\n[WARN] 发生错误: {e}, {retry_wait} 秒后重试 ({retries}/{max_retries})..."
                 )
                 time.sleep(retry_wait)
+
     return done
 
 
@@ -130,12 +130,16 @@ def get_file_info(service, file_id):
     :param file_id: 文件 ID
     :return: 文件信息
     """
-    return service.files().get(fileId=file_id, fields="name,size").execute()
+    return (
+        service.files()
+        .get(fileId=file_id, fields="name,size", supportsAllDrives=True)
+        .execute()
+    )
 
 
 if __name__ == "__main__":
     file_id = ""
-    save_dir = "/opt/download"
+    save_dir = ""
     credentials_path = "credential.json"
 
     run(file_id, save_dir, credentials_path)
