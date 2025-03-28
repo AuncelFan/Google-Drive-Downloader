@@ -1,6 +1,7 @@
 import io
 import os
 import time
+import hashlib
 from tqdm import tqdm
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -48,8 +49,16 @@ def run(file_id: str, save_dir: str, credentials_path: str):
         final_path = os.path.join(save_dir, file_name)
 
         if os.path.exists(final_path):
-            print(f"\n🆗 文件已存在: {final_path}")
-            return True
+            md5_checksum = file_info.get("md5Checksum")
+            md5 = hashlib.md5()
+            with open(final_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    md5.update(chunk)
+            if md5.hexdigest() == md5_checksum:
+                print(f"\n 🆗 文件已存在: {final_path}")
+                return True
+            else:
+                print(f"\n ⚠️ 文件已存在，但 MD5 不匹配，请手动处理: {final_path}")
 
         temp_path = os.path.join(save_dir, f"{file_id}.part")
 
@@ -57,13 +66,13 @@ def run(file_id: str, save_dir: str, credentials_path: str):
 
         if success:
             os.rename(temp_path, final_path)
-            print(f"\n✅ 文件下载完成: {final_path}")
+            print(f"\n ✅ 文件下载完成: {final_path}")
             return True
         else:
-            print(f"\n❌ 下载失败，临时文件已保存: {temp_path}")
+            print(f"\n ❌ 下载失败，临时文件已保存: {temp_path}")
             return False
     except Exception as e:
-        print(f"\n❌ 任务异常: {e}")
+        print(f"\n ❌ 任务异常: {e}")
         return False
 
 
@@ -84,7 +93,7 @@ def resume_download(service, file_id, temp_path, file_info, max_retries=3):
 
     request = service.files().get_media(fileId=file_id)
 
-    print(f"\n📥 开始下载: {file_name}, ID: {file_id}, Size: {total_size}B")
+    print(f"\n 📥 开始下载: {file_name}, ID: {file_id}, Size: {total_size}B")
 
     # 创建进度条和文件对象
     with tqdm(
@@ -97,7 +106,7 @@ def resume_download(service, file_id, temp_path, file_info, max_retries=3):
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
     ) as progress_bar, io.FileIO(temp_path, mode="ab") as f:
 
-        downloader = MediaIoBaseDownload(f, request, chunksize= 10 * 1024 * 1024)
+        downloader = MediaIoBaseDownload(f, request, chunksize=10 * 1024 * 1024)
         downloader._progress = offset
         done = False
         retries = 0
@@ -133,7 +142,11 @@ def get_file_info(service, file_id):
     """
     return (
         service.files()
-        .get(fileId=file_id, fields="name,size", supportsAllDrives=True)
+        .get(
+            fileId=file_id,
+            fields="name,size,md5Checksum",
+            supportsAllDrives=True,
+        )
         .execute()
     )
 
