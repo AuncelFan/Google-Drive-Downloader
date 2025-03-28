@@ -93,10 +93,11 @@ def resume_download(service, file_id, temp_path, file_info, max_retries=3):
         unit_scale=True,
         unit_divisor=1024,
         initial=offset,
+        dynamic_ncols=True,
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
     ) as progress_bar, io.FileIO(temp_path, mode="ab") as f:
 
-        downloader = MediaIoBaseDownload(f, request, chunksize=1024 * 1024)
+        downloader = MediaIoBaseDownload(f, request, chunksize= 10 * 1024 * 1024)
         downloader._progress = offset
         done = False
         retries = 0
