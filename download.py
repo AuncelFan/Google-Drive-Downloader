@@ -31,14 +31,27 @@ def run(file_id: str, save_dir: str, credentials_path: str):
             creds = Credentials.from_authorized_user_file("token.json", SCOPES)
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                print("\n[INFO] 认证凭据已过期，正在刷新...")
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    print(f"\n[ERROR] 刷新凭据失败: {e}, 请重新认证...")
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        credentials_path, SCOPES
+                    )
+                    creds = flow.run_local_server(port=PORT)
             else:
+                print("\n[INFO] 认证凭据不存在或无效，正在获取新的凭据...")
                 flow = InstalledAppFlow.from_client_secrets_file(
                     credentials_path, SCOPES
                 )
                 creds = flow.run_local_server(port=PORT)
             with open("token.json", "w") as token:
+                print("\n[INFO] 正在保存认证凭据...")
                 token.write(creds.to_json())
+                print("\n[INFO] 认证凭据保存成功!")
+
+        print(f"\n 开始下载任务: {file_id}")
 
         service = build("drive", "v3", credentials=creds)
 
@@ -51,11 +64,12 @@ def run(file_id: str, save_dir: str, credentials_path: str):
         if os.path.exists(final_path):
             md5_checksum = file_info.get("md5Checksum")
             md5 = hashlib.md5()
+            print(f"\n[INFO] 文件已存在: {final_path}, 正在验证 MD5 校验和...")
             with open(final_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
+                for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
                     md5.update(chunk)
             if md5.hexdigest() == md5_checksum:
-                print(f"\n 🆗 文件已存在: {final_path}")
+                print(f"\n 🆗 文件已下载成功: {final_path}")
                 return True
             else:
                 print(f"\n ⚠️ 文件已存在，但 MD5 不匹配，请手动处理: {final_path}")
