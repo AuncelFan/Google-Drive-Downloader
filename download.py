@@ -17,39 +17,17 @@ SCOPES = [
 ]
 
 
-def run(file_id: str, save_dir: str, credentials_path: str):
+def run(file_id: str, save_dir: str, credentials_path: str, check_sum: bool = True):
     """
     运行下载任务，自动获取文件名，并存储到指定目录
     :param file_id: Google Drive 文件 ID
     :param save_dir: 下载目录
     :param credentials_path: 认证凭据文件路径
+    :param check_sum: 是否校验文件的 MD5 值
     :return: 下载是否成功
     """
     try:
-        creds = None
-        if os.path.exists("token.json"):
-            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                print("\n[INFO] 认证凭据已过期，正在刷新...")
-                try:
-                    creds.refresh(Request())
-                except Exception as e:
-                    print(f"\n[ERROR] 刷新凭据失败: {e}, 请重新认证...")
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        credentials_path, SCOPES
-                    )
-                    creds = flow.run_local_server(port=PORT)
-            else:
-                print("\n[INFO] 认证凭据不存在或无效，正在获取新的凭据...")
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    credentials_path, SCOPES
-                )
-                creds = flow.run_local_server(port=PORT)
-            with open("token.json", "w") as token:
-                print("\n[INFO] 正在保存认证凭据...")
-                token.write(creds.to_json())
-                print("\n[INFO] 认证凭据保存成功!")
+        creds = init_credentials(credentials_path)
 
         print(f"\n 开始下载任务: {file_id}")
 
@@ -62,13 +40,10 @@ def run(file_id: str, save_dir: str, credentials_path: str):
         final_path = os.path.join(save_dir, file_name)
 
         if os.path.exists(final_path):
-            md5_checksum = file_info.get("md5Checksum")
-            md5 = hashlib.md5()
-            print(f"\n[INFO] 文件已存在: {final_path}, 正在验证 MD5 校验和...")
-            with open(final_path, "rb") as f:
-                for chunk in iter(lambda: f.read(8 * 1024 * 1024), b""):
-                    md5.update(chunk)
-            if md5.hexdigest() == md5_checksum:
+            if not check_sum:
+                print(f"\n 🆗 文件已下载成功: {final_path}")
+                return True
+            if check_md5(final_path, file_info.get("md5Checksum", "")):
                 print(f"\n 🆗 文件已下载成功: {final_path}")
                 return True
             else:
@@ -81,13 +56,79 @@ def run(file_id: str, save_dir: str, credentials_path: str):
         if success:
             os.rename(temp_path, final_path)
             print(f"\n ✅ 文件下载完成: {final_path}")
-            return True
+            if not check_sum:
+                return True
+            if check_md5(final_path, file_info.get("md5Checksum", "")):
+                print(f"\n 🆗 文件校验成功: {final_path}")
+                return True
+            else:
+                print(f"\n ⚠️ 文件 md5 值不相符，请手动处理: {final_path}")
+                return False
         else:
-            print(f"\n ❌ 下载失败，临时文件已保存: {temp_path}")
-            return False
+            print(f"\n ❌ 文件下载失败: {file_id}")
+                
     except Exception as e:
         print(f"\n ❌ 任务异常: {e}")
         return False
+
+
+def init_credentials(credentials_path):
+    """
+    初始化 Google Drive API 认证凭据
+    :param credentials_path: 认证凭据文件路径
+    :return: 已授权的凭据
+    """
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            print("\n 认证凭据已过期，正在刷新...")
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                print(f"\n 刷新凭据失败: {e}, 请重新认证...")
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    credentials_path, SCOPES
+                )
+                creds = flow.run_local_server(port=PORT)
+        else:
+            print("\n 认证凭据不存在或无效，正在获取新的凭据...")
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+            creds = flow.run_local_server(port=PORT)
+        if not creds:
+            raise Exception("获取凭据失败")
+        with open("token.json", "w") as token:
+            print("\n 正在保存认证凭据...")
+            token.write(creds.to_json())
+            print("\n 认证凭据保存成功!")
+    return creds
+
+
+def check_md5(file_path, expected_md5):
+    """
+    检查文件的 MD5 校验和
+    :param file_path: 文件路径
+    :param expected_md5: 预期的 MD5 校验和
+    :return: 是否匹配
+    """
+    print(f"\n 📥 正在校验文件md5: {file_path}")
+    md5 = hashlib.md5()
+    file_size = os.path.getsize(file_path)
+    chunk_size = 64 * 1024 * 1024 if file_size > 1024 * 1024 * 1024 else 4 * 1024 * 1024
+    with open(file_path, "rb") as f, tqdm(
+        total=file_size,
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+        dynamic_ncols=True,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+    ) as progress_bar:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            md5.update(chunk)
+            progress_bar.update(len(chunk))
+    progress_bar.close()
+    return md5.hexdigest() == expected_md5
 
 
 def resume_download(service, file_id, temp_path, file_info, max_retries=3):
@@ -166,8 +207,9 @@ def get_file_info(service, file_id):
 
 
 if __name__ == "__main__":
+
+    # 示例用法
     file_id = ""
     save_dir = ""
     credentials_path = "credential.json"
-
-    run(file_id, save_dir, credentials_path)
+    run(file_id, save_dir, credentials_path, check_sum=True)
